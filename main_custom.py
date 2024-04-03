@@ -20,6 +20,8 @@ import sinkhornknopp as sk
 from data_custom import return_model_loader
 warnings.simplefilter("ignore", UserWarning)
 
+import matplotlib.pyplot as plt
+import seaborn as sns 
 
 
 
@@ -83,12 +85,13 @@ class Optimizer:
             now = time.time()
             niter = epoch * len(loader) + iter
 
-            if niter*args.batch_size >= self.optimize_times[-1]:
+            if len(self.optimize_times) == 0 or niter*args.batch_size >= self.optimize_times[-1]:
                 ############ optimize labels #########################################
                 self.model.headcount = 1
                 print('Optimizaton starting', flush=True)
                 with torch.no_grad():
-                    _ = self.optimize_times.pop()
+                    if len(self.optimize_times) > 0:
+                        _ = self.optimize_times.pop()
                     self.optimize_labels(niter)
             data = data.to(self.dev)
             mass = data.size(0)
@@ -167,10 +170,52 @@ class Optimizer:
                 lowest_loss = m['loss']
                 files.save_checkpoint_all(self.checkpoint_dir, self.model, args.arch,
                                           optimizer, self.L, epoch, lowest=True)
+                
+            if epoch % 5 == 0:
+                self.model_evaluate(epoch)
+
             epoch += 1
         print(f"optimization completed. Saving model to {os.path.join(self.checkpoint_dir,'model_final.pth.tar')}")
         torch.save(self.model, os.path.join(self.checkpoint_dir, 'model_final.pth.tar'))
         return self.model
+    
+    def model_evaluate(self, epoch):
+        self.model.eval()
+        evaluate(self.model, self.K, self.dev, 
+                 save_stats=True, 
+                 filename=os.path.join(self.checkpoint_dir, f"epoch_{epoch}.jpg"))
+
+def evaluate(model, ncl, device, save_stats=False, filename=None):
+    label_groups = np.zeros((ncl, ncl), dtype=np.uint32)
+
+    with torch.no_grad():
+        for iter, (data, label, selected) in enumerate(train_loader):
+            data = data.to(device)
+            final = model(data)
+
+            for i, l in enumerate(label):
+                label_groups[l][np.argmax(final[i].detach().cpu().numpy())] += 1
+
+    if save_stats:
+        # Optionally, use seaborn for a nicer visualization
+        plt.figure(figsize=(10, 8))
+        sns.heatmap(label_groups, annot=True, fmt='d', cmap='Blues',
+                    xticklabels=range(ncl), yticklabels=range(ncl))
+        plt.xlabel('Predicted Labels')
+        plt.ylabel('True Labels')
+        plt.title('Confusion Matrix')
+        name = 'confusion_matrix.jpg'
+
+        if filename:
+            name = filename
+
+        plt.savefig(name)
+        plt.close()  # Close the plot to free memory
+
+    for i in range(ncl):
+        idx = np.argmax(label_groups[:, i])  # Corrected to access the i-th column
+        val = label_groups[idx, i] / max(np.sum(label_groups[:, i]), 1)  # Corrected indexing and ensured division by at least 1
+        print(f"Predicted Label:{i} Argmax:{idx} Percent: {val:.2f}")
 
 
 
@@ -210,8 +255,6 @@ def get_parser():
 
     return parser.parse_args()
 
-
-
 if __name__ == "__main__":
     args = get_parser()
     name = "%s" % args.comment.replace('/', '_')
@@ -246,4 +289,8 @@ if __name__ == "__main__":
                   ckpt_dir=os.path.join(args.exp, 'checkpoints'))
     o.writer = writer
     # Optimize
-    o.optimize()
+    trained_model = o.optimize()
+    trained_model.eval()
+
+    evaluate(trained_model, args.ncl, next(trained_model.parameters()).device, save_stats=True)
+
