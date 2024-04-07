@@ -109,9 +109,54 @@ def gpu_sk(self):
             self.L[nh][indices] = self.L[nh]
     return
 
+def optimize_L_sk_small(self, nh=0, tol=1e-1, max_iters=10000):
+    N = max(self.L.size())
+    K = self.outs[nh]
+
+    r = np.ones((K, 1), dtype=self.PS.dtype) / K
+    c = np.ones((N, 1), dtype=self.PS.dtype) / N
+
+    self.PS = self.PS.T  # Now it is K x N
+
+    epsilon = 1e-8
+
+    for iter in range(max_iters):
+        ps_dot_c = np.dot(self.PS, c)
+        # Debug print
+        #print(f"Iteration {iter}: Row sums before scaling: {ps_dot_c.sum(axis=0)}")
+        
+        # Avoid division by a small number by adding epsilon
+        ps_dot_c[ps_dot_c < epsilon] = epsilon
+        r = 1.0 / ps_dot_c
+
+        ps_dot_r = np.dot(self.PS.T, r)
+        # Debug print
+        #print(f"Iteration {iter}: Column sums before scaling: {ps_dot_r.sum(axis=0)}")
+        
+        # Avoid division by a small number by adding epsilon
+        ps_dot_r[ps_dot_r < epsilon] = epsilon
+        c_new = 1.0 / ps_dot_r
+
+        # Convergence check
+        if np.all(np.abs(np.sum(self.PS * r, axis=1) - 1) < tol) and \
+           np.all(np.abs(np.sum(self.PS.T * c_new, axis=0) - 1) < tol):
+            break
+
+        c = c_new
+
+    # Apply the scaling factors to self.PS
+    self.PS *= r
+    self.PS = (self.PS.T * c).T
+
+    return self.PS, iter
+
 def optimize_L_sk(self, nh=0):
     N = max(self.L.size())
     tt = time.time()
+    #if N < 500:
+    ##    self.PS, _counter = optimize_L_sk_small(self, nh)
+    #    argmaxes = np.nanargmax(self.PS, 0)
+    #else:
     self.PS = self.PS.T # now it is K x N
     r = np.ones((self.outs[nh], 1), dtype=self.dtype) / self.outs[nh]
     c = np.ones((N, 1), dtype=self.dtype) / N
@@ -120,11 +165,14 @@ def optimize_L_sk(self, nh=0):
     inv_N = self.dtype(1./N)
     err = 1e6
     _counter = 0
+
     while err > 1e-1:
         r = inv_K / (self.PS @ c)          # (KxN)@(N,1) = K x 1
         c_new = inv_N / (r.T @ self.PS).T  # ((1,K)@(KxN)).t() = N x 1
+
         if _counter % 10 == 0:
             err = np.nansum(np.abs(c / c_new - 1))
+
         c = c_new
         _counter += 1
     print("error: ", err, 'step ', _counter, flush=True)  # " nonneg: ", sum(I), flush=True)
@@ -134,6 +182,7 @@ def optimize_L_sk(self, nh=0):
     self.PS *= np.squeeze(r)
     self.PS = self.PS.T
     argmaxes = np.nanargmax(self.PS, 0) # size N
+        
     newL = torch.LongTensor(argmaxes)
     self.L[nh] = newL.to(self.dev)
     print('opt took {0:.2f}min, {1:4d}iters'.format(((time.time() - tt) / 60.), _counter), flush=True)

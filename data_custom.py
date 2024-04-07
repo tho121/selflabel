@@ -46,7 +46,9 @@ def return_model_loader(args, return_loader=True):
     train_loader = get_aug_dataloader(image_dir=args.dataset_path,
                                       batch_size=args.batch_size,
                                       num_workers=args.workers,
-                                      augs=int(args.augs))
+                                      augs=int(args.augs),
+                                      labeled=args.labeled
+                                      )
 
     return model, train_loader
 
@@ -54,7 +56,7 @@ def get_aug_dataloader(image_dir,
                        batch_size=256, image_size=256, crop_size=224,
                        mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225],
                        num_workers=8,
-                       augs=2, shuffle=True):
+                       augs=2, shuffle=True, labeled=True):
 
     print(image_dir)
     if image_dir is None:
@@ -95,6 +97,7 @@ def get_aug_dataloader(image_dir,
                                     normalize
                                 ])
 
+    '''
     train_data = datasets.CIFAR10(
         root='data',
         train=True,
@@ -102,11 +105,13 @@ def get_aug_dataloader(image_dir,
         transform=_transforms
     )
 
-    subset_train = Subset(train_data, indices=range(100))
-
-
-    #dataset = SimpleDataset(image_dir, _transforms)
-    dataset = DataSet(subset_train)
+    subset_train = Subset(train_data, indices=range(500))
+    '''
+    if labeled:
+        dataset = DataSet(torchvision.datasets.ImageFolder(image_dir, _transforms))
+    else:
+        dataset = SimpleDataset(image_dir, _transforms)
+    #dataset = DataSet(subset_train)
     loader = torch.utils.data.DataLoader(
         dataset,
         batch_size=batch_size,

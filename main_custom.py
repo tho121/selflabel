@@ -193,6 +193,10 @@ def evaluate(model, ncl, device, save_stats=False, filename=None):
             data = data.to(device)
             final = model(data)
 
+            if isinstance(final, list):
+                final = torch.stack([final[h] for h in range(len(final))])
+                final = torch.mean(final, axis=0)
+
             for i, l in enumerate(label):
                 label_groups[l][np.argmax(final[i].detach().cpu().numpy())] += 1
 
@@ -251,7 +255,7 @@ def get_parser():
     parser.add_argument('--comment', default='self-label-default', type=str, help='name for tensorboardX')
     parser.add_argument('--log-intv', default=1, type=int, help='save stuff every x epochs (default: 1)')
     parser.add_argument('--log-iter', default=200, type=int, help='log every x-th batch (default: 200)')
-
+    parser.add_argument('--labeled', default=False, action='store_true', help='Whether dataset has labeled images (images in class folders)')
 
     return parser.parse_args()
 
