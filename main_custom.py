@@ -8,6 +8,7 @@ import torch
 import torch.optim
 import torch.nn as nn
 import torch.utils.data
+import torchvision
 
 try:
     from tensorboardX import SummaryWriter
@@ -185,8 +186,12 @@ class Optimizer:
                  save_stats=True, 
                  filename=os.path.join(self.checkpoint_dir, f"epoch_{epoch}.jpg"))
 
-def evaluate(model, ncl, device, save_stats=False, filename=None):
-    label_groups = np.zeros((ncl, ncl), dtype=np.uint32)
+def evaluate(model, ncl, device, save_stats=False, filename=None, labeled=False, save_img_groups=False):
+
+    if labeled:
+        label_groups = np.zeros((ncl, ncl), dtype=np.uint32)
+    else:
+        label_groups = np.zeros((1, ncl), dtype=np.uint32)
 
     with torch.no_grad():
         for iter, (data, label, selected) in enumerate(train_loader):
@@ -198,30 +203,72 @@ def evaluate(model, ncl, device, save_stats=False, filename=None):
                 final = torch.mean(final, axis=0)
 
             for i, l in enumerate(label):
-                label_groups[l][np.argmax(final[i].detach().cpu().numpy())] += 1
+                if labeled:
+                    label_groups[l][np.argmax(final[i].detach().cpu().numpy())] += 1
+                else:
+                    label_groups[0][np.argmax(final[i].detach().cpu().numpy())] += 1
+
+                if save_img_groups:
+                    parent_dir = 'model_predictions'
+
+                    if not os.path.exists(parent_dir):
+                        os.makedirs(parent_dir)
+
+                    prediction = np.argmax(final[i].detach().cpu().numpy())
+                    folder_name = os.path.join(parent_dir, f'predicted_{prediction}')
+                    if not os.path.exists(folder_name):
+                        os.makedirs(folder_name)
+
+                    # Save the image
+                    image_tensor = data[i].cpu()  # Make sure the image tensor is on the CPU
+
+                    # Assuming the image tensor is normalized, unnormalize it
+                    # If your normalization is different, adjust the following line accordingly
+                    image_tensor = image_tensor * 0.5 + 0.5
+
+                    # Construct the path where to save the image
+                    img_name = os.path.join(folder_name, f'image_{iter}_{i}.png')
+
+                    # Use torchvision.utils.save_image to save, no need to convert to numpy or transpose
+                    torchvision.utils.save_image(image_tensor, img_name)
+
+
 
     if save_stats:
         # Optionally, use seaborn for a nicer visualization
-        plt.figure(figsize=(10, 8))
-        sns.heatmap(label_groups, annot=True, fmt='d', cmap='Blues',
-                    xticklabels=range(ncl), yticklabels=range(ncl))
-        plt.xlabel('Predicted Labels')
-        plt.ylabel('True Labels')
-        plt.title('Confusion Matrix')
-        name = 'confusion_matrix.jpg'
+        if labeled:
+            plt.figure(figsize=(10, 8))
+            sns.heatmap(label_groups, annot=True, fmt='d', cmap='Blues',
+                        xticklabels=range(ncl), yticklabels=range(ncl))
+            plt.xlabel('Predicted Labels')
+            plt.ylabel('True Labels' if labeled else 'Count')
+            plt.title('Confusion Matrix')
+            name = 'confusion_matrix.jpg'
 
-        if filename:
-            name = filename
+            if filename:
+                name = filename
 
-        plt.savefig(name)
-        plt.close()  # Close the plot to free memory
+            plt.savefig(name)
+            plt.close()  # Close the plot to free memory
+        else:
+            # Call the bar graph function if labeled is False
+            plot_label_distribution(label_groups, ncl, filename=filename)
 
-    for i in range(ncl):
-        idx = np.argmax(label_groups[:, i])  # Corrected to access the i-th column
-        val = label_groups[idx, i] / max(np.sum(label_groups[:, i]), 1)  # Corrected indexing and ensured division by at least 1
-        print(f"Predicted Label:{i} Argmax:{idx} Percent: {val:.2f}")
+def plot_label_distribution(label_counts, ncl, filename=None):
+    # Generate a bar graph for the label distribution.
+    plt.figure(figsize=(10, 8))  # Adjust the size as needed.
+    bar_positions = np.arange(ncl)
+    plt.bar(bar_positions, label_counts[0], align='center', alpha=0.7)
 
+    plt.xlabel('Predicted Labels')
+    plt.ylabel('Number of Data Points')
+    plt.title('Label Distribution')
+    plt.xticks(bar_positions, bar_positions)  # Assuming you want to label the bars with their respective label numbers.
 
+    # Save the figure
+    name = 'label_distribution.jpg' if not filename else filename
+    plt.savefig(name)
+    plt.close()  # Close the plot to free memory
 
 def get_parser():
     parser = argparse.ArgumentParser(description='PyTorch Implementation of Self-Label')
@@ -294,7 +341,8 @@ if __name__ == "__main__":
     o.writer = writer
     # Optimize
     trained_model = o.optimize()
+    #trained_model = torch.load("/home/tho121/selflabel/self-label/self-label-uno-all/checkpoints/model_final.pth.tar")
     trained_model.eval()
 
-    evaluate(trained_model, args.ncl, next(trained_model.parameters()).device, save_stats=True)
+    evaluate(trained_model, args.ncl, next(trained_model.parameters()).device, save_stats=True, labeled=args.labeled, save_img_groups=True)
 
